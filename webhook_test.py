@@ -1,6 +1,8 @@
 import requests
-from fastapi import FastAPI, Request, Query, HTTPException
+from fastapi import FastAPI, Request, Query, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse
+import google.genai as genai
+
 from dotenv import load_dotenv
 import os 
 load_dotenv()
@@ -10,6 +12,13 @@ load_dotenv()
 app = FastAPI()
 PAGE_ACCESS_TOKEN  = os.environ['PAGE_ACCESS_TOKEN']
 VERIFY_TOKEN = os.environ['VERIFY_TOKEN']
+GEMINI_API_KEY  = os.environ['GEMINI_API_KEY']
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+# Wybieramy model (możesz użyć 'gemini-2.0-flash' jeśli masz dostęp, lub 'gemini-1.5-flash')
+MODEL_ID = 'gemini-2.5-flash'
+
 
 def send_message(recipient_id, text):
     # Adres API Facebooka (wersja v19.0 lub nowsza)
@@ -21,13 +30,39 @@ def send_message(recipient_id, text):
         "message": {"text": text}
     }
     
-    # Wysyłamy zapytanie POST
-    response = requests.post(url, json=payload)
-    
-    if response.status_code == 200:
-        print(f"Wysłano odpowiedź do {recipient_id}")
-    else:
-        print(f"Błąd wysyłania: {response.status_code}, {response.text}")
+    try:
+        r = requests.post(url, json=payload)
+        if r.status_code == 200:
+            print(f"Wysłano do {recipient_id}: {text[:50]}...")
+        else:
+            print(f"Błąd FB: {r.text}")
+    except Exception as e:
+        print(f"Błąd sieci: {e}")
+
+async def process_ai_response(sender_id, user_message):
+    """
+    Funkcja działająca w tle.
+    Używa nowej metody asynchronicznej klienta Gemini (client.aio).
+    """
+    try:
+        print(f"Pytam Gemini o: {user_message}")
+        
+        # --- NOWE WYWOŁANIE ASYNCHRONICZNE ---
+        # Używamy 'client.aio.models.generate_content' dla operacji async
+        response = await client.aio.models.generate_content(
+            model=MODEL_ID,
+            contents=user_message
+        )
+        
+        # Pobieramy tekst z odpowiedzi
+        ai_text = response.text
+        
+        # Wysyłamy odpowiedź na Messengera
+        send_message(sender_id, ai_text)
+        
+    except Exception as e:
+        print(f"Błąd Gemini: {e}")
+        send_message(sender_id, "Przepraszam, mam problem z połączeniem do mojego mózgu 🤖")
 
 # --- ENDPOINTY ---
 
@@ -42,30 +77,26 @@ async def verify_webhook(
     raise HTTPException(status_code=403, detail="Błędny token")
 
 @app.post("/webhook")
-async def receive_webhook(request: Request):
+async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     data = await request.json()
-    
-    # Facebook może przesłać kilka zdarzeń naraz (batch), więc iterujemy
-    # Struktura JSONa: entry -> messaging -> sender -> id
-    
+
     try:
         if data.get("object") == "page":
             for entry in data.get("entry", []):
                 for event in entry.get("messaging", []):
                     
-                    # Sprawdzamy, czy to jest wiadomość (a nie np. potwierdzenie dostarczenia)
-                    if "message" in event:
+                    # Sprawdzamy czy to wiadomość tekstowa i czy nie jest echem (od nas samych)
+                    if "message" in event and "text" in event["message"] and not event["message"].get("is_echo"):
+                        
                         sender_id = event["sender"]["id"]
-                        message_text = event["message"].get("text")
+                        user_text = event["message"]["text"]
                         
-                        print(f"Otrzymano wiadomość od {sender_id}: {message_text}")
-                        
-                        # --- TU WYSYŁAMY ODPOWIEDŹ ---
-                        response_text = "Witamy, zaraz ktoś postara się odpowiedziec na pani/ pana pytanie"
-                        send_message(sender_id, response_text)
-                        
-    except Exception as e:
-        print(f"Wystąpił błąd przetwarzania: {e}")
+                        print(f"Otrzymano od {sender_id}: {user_text}")
 
-    # Zawsze zwracamy 200 OK, żeby Facebook nie ponawiał wysyłki
+                        # Zlecamy zadanie w tle
+                        background_tasks.add_task(process_ai_response, sender_id, user_text)
+
+    except Exception as e:
+        print(f"Błąd przetwarzania webhooka: {e}")
+
     return {"status": "ok"}
