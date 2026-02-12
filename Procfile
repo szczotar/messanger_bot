@@ -1,1 +1,1 @@
-web: uvicorn webhook_test:app --host 0.0.0.0 --port
+web: uvicorn webhook_test:app --host 0.0.0.0 --port ${PORT:-5000}
