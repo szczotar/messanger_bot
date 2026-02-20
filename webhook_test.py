@@ -16,12 +16,12 @@ GEMINI_API_KEY  = os.environ['GEMINI_API_KEY']
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Wybieramy model (możesz użyć 'gemini-2.0-flash' jeśli masz dostęp, lub 'gemini-1.5-flash')
+
 MODEL_ID = 'gemini-2.5-flash'
 
 
 def send_message(recipient_id, text):
-    # Adres API Facebooka (wersja v19.0 lub nowsza)
+ 
     url = f"https://graph.facebook.com/v24.0/989545910907540/messages?access_token={PAGE_ACCESS_TOKEN}"
     
     # Struktura danych wymagana przez Facebooka
@@ -41,8 +41,7 @@ def send_message(recipient_id, text):
 
 async def process_ai_response(sender_id, user_message):
     """
-    Funkcja działająca w tle.
-    Używa nowej metody asynchronicznej klienta Gemini (client.aio).
+    background.
     """
     try:
         print(f"Pytam Gemini o: {user_message}")
